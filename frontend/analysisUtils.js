@@ -38,185 +38,117 @@ export const calculateAbsorbance = (sampleRGB, blankSampleRGB, referenceRGB, bla
   return { r: absR, g: absG, b: absB };
 };
 
-/**
- * Extracts the average RGB values from a specified ROI in image data.
- * @param {Uint8ClampedArray} imageData - The raw pixel data from the canvas.
- * @param {number} width - The width of the canvas/image.
- * @param {number} x - The starting x-coordinate of the ROI.
- * @param {number} y - The starting y-coordinate of the ROI.
- * @param {number} w - The width of the ROI.
- * @param {number} h - The height of the ROI.
- * @returns {object} Average RGB values {r, g, b}.
- */
-export const getAverageRGB = (imageData, width, x, y, w, h) => {
-  let r = 0, g = 0, b = 0;
-  let count = 0;
-  
-  // Ensure ROI is within bounds
-  const startX = Math.floor(Math.max(0, x));
-  const startY = Math.floor(Math.max(0, y));
-  const endX = Math.floor(Math.min(width, x + w));
-  const endY = Math.floor(Math.min(imageData.length / (4 * width), y + h));
+export function analyzeKineticData(absorbanceData) {
+  if (absorbanceData.length < 5) {
+    throw new Error('Not enough data points for analysis.');
+  }
 
-  for (let j = startY; j < endY; j++) {
-    for (let i = startX; i < endX; i++) {
-      const index = (j * width + i) * 4;
-      r += imageData[index];
-      g += imageData[index + 1];
-      b += imageData[index + 2];
-      count++;
+  const channels = ['r', 'g', 'b'];
+  let bestFit = { r_squared: -Infinity };
+
+  channels.forEach(channel => {
+    const data = absorbanceData.map(d => ({ x: d.time, y: d.abs[channel] }));
+    
+    // Attempt to find the most linear region for V0 calculation.
+    // This looks for the best R^2 from a moving window of points.
+    const windowSize = Math.max(5, Math.floor(data.length * 0.25));
+    let bestWindow = { r_squared: -Infinity, slope: 0, startTime: 0, endTime: 0 };
+
+    for (let i = 0; i <= data.length - windowSize; i++) {
+        const window = data.slice(i, i + windowSize);
+        const lr = linearRegression(window.map(p => p.x), window.map(p => p.y));
+        if (lr.r_squared > bestWindow.r_squared) {
+            bestWindow = {
+                r_squared: lr.r_squared,
+                slope: lr.slope,
+                startTime: window[0].x,
+                endTime: window[window.length - 1].x,
+            };
+        }
     }
-  }
-
-  if (count === 0) return { r: 0, g: 0, b: 0 };
-  
-  return { r: r / count, g: g / count, b: b / count };
-};
-
-// --- Kinetic Analysis functions (V0, R-squared, etc.) ---
-
-export const smoothData = (data, windowSize = 5) => {
-  if (data.length < windowSize) return data;
-  const smoothed = [];
-  for (let i = 0; i < data.length; i++) {
-    const start = Math.max(0, i - Math.floor(windowSize / 2));
-    const end = Math.min(data.length, i + Math.floor(windowSize / 2) + 1);
-    const sum = data.slice(start, end).reduce((a, b) => a + b, 0);
-    smoothed.push(sum / (end - start));
-  }
-  return smoothed;
-};
-
-const calculateRSquared = (actual, predicted) => {
-  const mean = actual.reduce((a, b) => a + b, 0) / actual.length;
-  const ssTotal = actual.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0);
-  const ssRes = actual.reduce((sum, val, i) => sum + Math.pow(val - predicted[i], 2), 0);
-  if (ssTotal < 1e-9) return ssRes < 1e-9 ? 1.0 : 0.0;
-  return Math.max(0, 1 - (ssRes / ssTotal));
-};
-
-export const linearRegression = (xData, yData) => {
-  if (xData.length < 2) return { slope: 0, intercept: 0, r_squared: 0 };
-  const n = xData.length;
-  const sumX = xData.reduce((a, b) => a + b, 0);
-  const sumY = yData.reduce((a, b) => a + b, 0);
-  const sumXY = xData.reduce((sum, x, i) => sum + x * yData[i], 0);
-  const sumX2 = xData.reduce((sum, x) => sum + x * x, 0);
-  
-  const denominator = (n * sumX2 - sumX * sumX);
-  if (Math.abs(denominator) < 1e-9) return { slope: 0, intercept: 0, r_squared: 0 };
-
-  const slope = (n * sumXY - sumX * sumY) / denominator;
-  const intercept = (sumY - slope * sumX) / n;
-  
-  const predicted = xData.map(x => slope * x + intercept);
-  const r_squared = calculateRSquared(yData, predicted);
-  
-  return { slope, intercept, r_squared };
-};
-
-export const findBestLinearSegment = (timeData, absDataRaw, minPoints = 5) => {
-  const n = timeData.length;
-  if (n < minPoints) {
-    return linearRegression(timeData, absDataRaw);
-  }
-
-  const absDataSmooth = smoothData(absDataRaw, 5);
-  let bestSlope = 0;
-  let bestR2 = -1.0;
-  let bestStartIdx = 0;
-  let bestEndIdx = minPoints - 1;
-
-  // Sliding window to find the most linear segment for V0
-  for (let i = 0; i <= n - minPoints; i++) {
-    for (let j = i + minPoints - 1; j < n; j++) {
-      const timeSegment = timeData.slice(i, j + 1);
-      const smoothSegment = absDataSmooth.slice(i, j + 1);
-      const rawSegment = absDataRaw.slice(i, j + 1);
-
-      const model = linearRegression(timeSegment, smoothSegment);
       
-      const predictedRaw = timeSegment.map(x => model.slope * x + model.intercept);
-      const r2_raw = calculateRSquared(rawSegment, predictedRaw);
-
-      if (r2_raw > bestR2) {
-        bestR2 = r2_raw;
-        bestSlope = model.slope;
-        bestStartIdx = i;
-        bestEndIdx = j;
-      }
+    if (bestWindow.r_squared > bestFit.r_squared) {
+        bestFit = {
+            v0: bestWindow.slope,
+            r_squared: bestWindow.r_squared,
+            primaryChannel: channel,
+            startTime: bestWindow.startTime,
+            endTime: bestWindow.endTime,
+            phases: [{ // Simplified to a single phase representing the initial rate
+                name: 'Initial Rate',
+                timeStart: bestWindow.startTime.toFixed(2),
+                timeEnd: bestWindow.endTime.toFixed(2),
+                slope: bestWindow.slope,
+                r_squared: bestWindow.r_squared,
+            }]
+        };
     }
-  }
-  
-  return { slope: bestSlope, r_squared: bestR2, startIdx: bestStartIdx, endIdx: bestEndIdx };
-};
+  });
 
-export const analyzeKineticData = (absorbanceData) => {
-  const timeData = absorbanceData.map(d => d.time);
-  const rData = absorbanceData.map(a => a.abs.r);
-  const gData = absorbanceData.map(a => a.abs.g);
-  const bData = absorbanceData.map(a => a.abs.b);
-  
-  const rChange = Math.abs(rData[rData.length - 1] - rData[0]);
-  const gChange = Math.abs(gData[gData.length - 1] - gData[0]);
-  const bChange = Math.abs(bData[bData.length - 1] - bData[0]);
-  
-  const changes = { r: rChange, g: gChange, b: bChange };
-  const primaryChannel = Object.keys(changes).reduce((a, b) => changes[a] > changes[b] ? a : b);
-  
-  const primaryData = primaryChannel === 'r' ? rData : primaryChannel === 'g' ? gData : bData;
-  
-  const analysis = findBestLinearSegment(timeData, primaryData, 5);
-  
-  const midPoint = Math.floor(timeData.length / 2);
-  const phase1Start = timeData[0];
-  const phase1End = timeData[Math.min(midPoint, timeData.length - 1)];
-  const phase2Start = timeData[midPoint];
-  const phase2End = timeData[timeData.length - 1];
-  
-  const phase1 = linearRegression(timeData.slice(0, midPoint), primaryData.slice(0, midPoint));
-  const phase2 = linearRegression(timeData.slice(midPoint), primaryData.slice(midPoint));
+  return bestFit;
+}
 
-  return {
-    v0: Math.abs(analysis.slope),
-    r_squared: analysis.r_squared,
-    primaryChannel,
-    startTime: timeData[analysis.startIdx],
-    endTime: timeData[analysis.endIdx],
-    phases: [
-      { 
-        name: 'Phase 1 (Initial)', 
-        slope: Math.abs(phase1.slope), 
-        r_squared: phase1.r_squared,
-        timeStart: phase1Start.toFixed(2),
-        timeEnd: phase1End.toFixed(2),
-      },
-      { 
-        name: 'Phase 2 (Final)', 
-        slope: Math.abs(phase2.slope), 
-        r_squared: phase2.r_squared,
-        timeStart: phase2Start.toFixed(2),
-        timeEnd: phase2End.toFixed(2),
-      },
-    ],
-  };
-};
-
-export const prepareChartData = (absorbanceData, maxPoints = 50) => {
-  const indices = [];
-  if (absorbanceData.length <= maxPoints) {
-    for (let i = 0; i < absorbanceData.length; i++) indices.push(i);
-  } else {
-    const step = Math.ceil(absorbanceData.length / maxPoints);
-    for (let i = 0; i < absorbanceData.length; i += step) {
-      indices.push(i);
-    }
-  }
-  
-  const chartTime = indices.map(i => absorbanceData[i].time);
-  const chartR = indices.map(i => absorbanceData[i].abs.r);
-  const chartG = indices.map(i => absorbanceData[i].abs.g);
-  const chartB = indices.map(i => absorbanceData[i].abs.b);
-  
+export function prepareChartData(absorbanceData) {
+  const chartTime = absorbanceData.map((d) => d.time);
+  const chartR = absorbanceData.map((d) => d.abs.r);
+  const chartG = absorbanceData.map((d) => d.abs.g);
+  const chartB = absorbanceData.map((d) => d.abs.b);
   return { chartTime, chartR, chartG, chartB };
-};
+}
+
+function linearRegression(x, y) {
+  const n = x.length;
+  let sum_x = 0;
+  let sum_y = 0;
+  let sum_xy = 0;
+  let sum_xx = 0;
+  let sum_yy = 0;
+
+  for (let i = 0; i < n; i++) {
+    sum_x += x[i];
+    sum_y += y[i];
+    sum_xy += x[i] * y[i];
+    sum_xx += x[i] * x[i];
+    sum_yy += y[i] * y[i];
+  }
+
+  const slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x);
+  const intercept = (sum_y - slope * sum_x) / n;
+  const r_squared = Math.pow(
+    (n * sum_xy - sum_x * sum_y) /
+      Math.sqrt((n * sum_xx - sum_x * sum_x) * (n * sum_yy - sum_y * sum_y)),
+    2
+  );
+
+  return { slope, intercept, r_squared };
+}
+
+export function calculateKineticParameters(data) {
+    // Michaelis-Menten
+    // For simplicity, this is not a non-linear fit but an estimation.
+    // A proper implementation would use a non-linear regression library.
+    const vmax = Math.max(...data.map(d => d.v0));
+    const km = data.find(d => d.v0 >= vmax / 2)?.s || 0;
+
+    const michaelisMenten = data.map(d => ({x: d.s, y: d.v0}));
+
+    // Lineweaver-Burk
+    const lineweaverBurkData = data.filter(d => d.s > 0 && d.v0 > 0).map(d => ({ x: 1 / d.s, y: 1 / d.v0 }));
+    const lb_lr = linearRegression(lineweaverBurkData.map(p => p.x), lineweaverBurkData.map(p => p.y));
+    const lb_vmax = 1 / lb_lr.intercept;
+    const lb_km = lb_lr.slope * lb_vmax;
+
+    // Hanes-Woolf
+    const hanesWoolfData = data.filter(d => d.s > 0 && d.v0 > 0).map(d => ({ x: d.s, y: d.s / d.v0 }));
+    const hw_lr = linearRegression(hanesWoolfData.map(p => p.x), hanesWoolfData.map(p => p.y));
+    const hw_vmax = 1 / hw_lr.slope;
+    const hw_km = hw_lr.intercept * hw_vmax;
+    
+    return {
+        vmax: (lb_vmax + hw_vmax) / 2, // Average of the two linear methods
+        km: (lb_km + hw_km) / 2,
+        michaelisMenten,
+        lineweaverBurk: lineweaverBurkData,
+        hanesWoolf: hanesWoolfData,
+    };
+}
