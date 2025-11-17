@@ -14,6 +14,7 @@ import Slider from '@react-native-community/slider';
 import { LineChart } from 'react-native-chart-kit';
 import Canvas from 'react-native-canvas';
 import * as analysisUtils from './analysisUtils';
+import { KineticAnalysisScreen } from './KineticAnalysisScreen';
 
 const API_URL = 'https://mobilespectro-183048999594.europe-west1.run.app';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -85,6 +86,25 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('scanner');
   const [absorbanceData, setAbsorbanceData] = useState([]);
 
+  useEffect(() => {
+    // Fetch history on initial load
+    const fetchHistory = async () => {
+      try {
+        const response = await fetch(`${API_URL}/history`);
+        if (response.ok) {
+          const historyResults = await response.json();
+          setResults(historyResults);
+        } else {
+          console.error('Failed to fetch history');
+        }
+      } catch (err) {
+        console.error('Error fetching history:', err);
+      }
+    };
+
+    fetchHistory();
+  }, []);
+
   const handleDeleteResult = (resultId) => {
     Alert.alert(
       'Delete Result',
@@ -148,6 +168,30 @@ export default function App() {
     }, 500);
     return () => clearInterval(interval);
   }, []);
+
+  // Fetch scan history on startup
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const response = await fetch(`${API_URL}/history`);
+        if (response.ok) {
+          const historyResults = await response.json();
+          // Sort results from newest to oldest
+          const sortedResults = historyResults.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          setResults(sortedResults);
+        } else {
+          Alert.alert('Error', 'Failed to load scan history from the server.');
+        }
+      } catch (err) {
+        console.error('Failed to fetch history:', err);
+        Alert.alert('Error', 'Could not connect to the server to load scan history.');
+      }
+    };
+
+    if (!loading) { // Only fetch history once backend is confirmed to be online
+      fetchHistory();
+    }
+  }, [loading]);
 
   // NOTE: countdown handling moved above to keep UI responsive
 
@@ -247,9 +291,8 @@ export default function App() {
 
   if (loading) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#238636" />
-        <Text style={styles.loadingText}>Connecting...</Text>
+      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+        <ActivityIndicator size="large" color="#007acc" />
       </View>
     );
   }
@@ -334,8 +377,11 @@ export default function App() {
           <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('scanner')}>
             <Text style={styles.tabText}>📷 Scanner</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.tab, styles.activeTab]}>
-            <Text style={[styles.tabText, styles.activeTabText]}>📊 Results</Text>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('results')}>
+            <Text style={styles.tabText}>📊 Results</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('analysis')}>
+            <Text style={styles.tabText}>📈 Analysis</Text>
           </TouchableOpacity>
         </View>
         <ResultsScreen
@@ -355,7 +401,10 @@ export default function App() {
             <Text style={styles.tabText}>📷 Scanner</Text>
           </TouchableOpacity>
           <TouchableOpacity style={[styles.tab, styles.activeTab]}>
-            <Text style={[styles.tabText, styles.activeTabText]}>📊 Results ({results.length})</Text>
+            <Text style={[styles.tabText, styles.activeTabText]}>📊 Results</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('analysis')}>
+            <Text style={styles.tabText}>📈 Analysis</Text>
           </TouchableOpacity>
         </View>
 
@@ -395,6 +444,26 @@ export default function App() {
     );
   }
 
+  if (activeTab === 'analysis') {
+    return (
+      <View style={styles.container}>
+        {/* Top Tab Bar */}
+        <View style={styles.tabs}>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('scanner')}>
+            <Text style={styles.tabText}>📷 Scanner</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('results')}>
+            <Text style={styles.tabText}>📊 Results</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.tab, styles.activeTab]}>
+            <Text style={[styles.tabText, styles.activeTabText]}>📈 Analysis</Text>
+          </TouchableOpacity>
+        </View>
+        <KineticAnalysisScreen results={results} />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Top Tab Bar - Persistent */}
@@ -425,11 +494,24 @@ export default function App() {
             📊 Results ({results.length})
           </Text>
         </TouchableOpacity>
+         <TouchableOpacity
+          style={[styles.tab, activeTab === 'analysis' && styles.activeTab]}
+          onPress={() => setActiveTab('analysis')}
+        >
+          <Text
+            style={[
+              styles.tabText,
+              activeTab === 'analysis' && styles.activeTabText,
+            ]}
+          >
+            📈 Analysis
+          </Text>
+        </TouchableOpacity>
       </View>
 
       {/* Header */}
       <View style={styles.header}>
-        <Text style={styles.title}>Enzyme Kinetic Detector</Text>
+        <Text style={styles.title}>BioDrop v2.0 - Spectrometer</Text>
         <Text style={styles.subtitle}>
           State: {appState}
         </Text>
@@ -516,11 +598,11 @@ export default function App() {
                 width={Math.max(320, screenWidth - 24)}
                 height={140}
                 chartConfig={{
-                  backgroundColor: '#0B1117',
-                  backgroundGradientFrom: '#0B1117',
-                  backgroundGradientTo: '#0B1117',
+                  backgroundColor: '#1e1e1e',
+                  backgroundGradientFrom: '#1e1e1e',
+                  backgroundGradientTo: '#1e1e1e',
                   color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
-                  labelColor: () => '#8B949E',
+                  labelColor: () => '#a0a0a0',
                   strokeWidth: 2,
                 }}
                 bezier
@@ -574,16 +656,17 @@ export default function App() {
                         width={Math.max(300, screenWidth - 48)}
                         height={120}
                         chartConfig={{
-                          backgroundColor: '#0B1117',
-                          backgroundGradientFrom: '#0B1117',
-                          backgroundGradientTo: '#0B1117',
+                          backgroundColor: '#1e1e1e',
+                          backgroundGradientFrom: '#1e1e1e',
+                          backgroundGradientTo: '#1e1e1e',
                           color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
-                          labelColor: () => '#8B949E',
+                          labelColor: () => '#a0a0a0',
                           strokeWidth: 2,
                         }}
                         bezier
                         withInnerLines={false}
                         withOuterLines={true}
+                        withVerticalLabels={true}
                         style={{ marginVertical: 4, borderRadius: 8 }}
                       />
                       <View style={styles.axisLabels}>
@@ -716,6 +799,36 @@ export default function App() {
       {/* Bottom nav (Instagram-like) */}
     </View>
   );
+}
+
+function AnalysisScreen() {
+    const handleStartAnalysis = () => {
+        Alert.alert(
+            "Feature in Development",
+            "This feature will allow you to perform Michaelis-Menten and Lineweaver-Burk plots by selecting multiple scans with known substrate concentrations. Stay tuned for updates!"
+        );
+    };
+
+    return (
+        <View style={styles.container}>
+            <View style={styles.header}>
+                <Text style={styles.title}>Kinetic Parameter Analysis</Text>
+                <Text style={styles.subtitle}>Combine multiple scans to determine Vmax and Km.</Text>
+            </View>
+            <View style={styles.emptyBox}>
+                <Text style={styles.emptyText}>No analysis yet.</Text>
+                <Text style={{color: '#a0a0a0', textAlign: 'center', marginHorizontal: 20, marginBottom: 20}}>
+                    To perform a kinetic analysis (e.g., Lineweaver-Burk plot), you need to run several scans at different, known substrate concentrations.
+                </Text>
+                <TouchableOpacity
+                    style={[styles.button, styles.primaryButton]}
+                    onPress={handleStartAnalysis}
+                >
+                    <Text style={styles.buttonText}>+ Start New Analysis</Text>
+                </TouchableOpacity>
+            </View>
+        </View>
+    );
 }
 
 function ResultsScreen({ result, onBack }) {
@@ -885,16 +998,17 @@ function ResultsScreen({ result, onBack }) {
                       width={Math.max(500, screenWidth)}
                       height={180}
                       chartConfig={{
-                        backgroundColor: '#0B1117',
-                        backgroundGradientFrom: '#0B1117',
-                        backgroundGradientTo: '#0B1117',
+                        backgroundColor: '#1e1e1e',
+                        backgroundGradientFrom: '#1e1e1e',
+                        backgroundGradientTo: '#1e1e1e',
                         color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
-                        labelColor: () => '#8B949E',
+                        labelColor: () => '#a0a0a0',
                         strokeWidth: 2,
                       }}
                       bezier
                       withInnerLines={false}
                       withOuterLines={true}
+                      withVerticalLabels={true}
                       style={{ borderRadius: 8 }}
                     />
                   </ScrollView>
@@ -948,11 +1062,11 @@ function ResultsScreen({ result, onBack }) {
                             width={Math.max(500, screenWidth)}
                             height={150}
                             chartConfig={{
-                              backgroundColor: '#0B1117',
-                              backgroundGradientFrom: '#0B1117',
-                              backgroundGradientTo: '#0B1117',
+                              backgroundColor: '#1e1e1e',
+                              backgroundGradientFrom: '#1e1e1e',
+                              backgroundGradientTo: '#1e1e1e',
                               color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
-                              labelColor: () => '#8B949E',
+                              labelColor: () => '#a0a0a0',
                               strokeWidth: 2,
                             }}
                             bezier
@@ -974,7 +1088,65 @@ function ResultsScreen({ result, onBack }) {
           })()
         )}
 
-        {/* Graph 3: Individual Channel Trends */}
+        {/* Graph 3: Raw Intensity Diagnostic Plot */}
+        {chartTime.length > 1 && (
+            <View style={styles.graphBox}>
+                <Text style={styles.chartTitle}>🔬 Raw Intensity (Diagnostic)</Text>
+                <Text style={styles.graphDescription}>
+                    Raw sensor values from Sample (solid) and Reference (dashed) ROIs. Helps diagnose lighting issues.
+                </Text>
+                {(() => {
+                    const labels = chartTime.slice(0, Math.min(8, chartTime.length)).map((t) => t.toFixed(1));
+                    const sampleR = result.absorbanceData.map(d => d.sample.r);
+                    const sampleG = result.absorbanceData.map(d => d.sample.g);
+                    const sampleB = result.absorbanceData.map(d => d.sample.b);
+                    const refR = result.absorbanceData.map(d => d.reference.r);
+                    const refG = result.absorbanceData.map(d => d.reference.g);
+                    const refB = result.absorbanceData.map(d => d.reference.b);
+
+                    const datasets = [
+                        { data: sampleR, color: () => 'rgba(255,100,100,1)', strokeWidth: 2, withDots: false },
+                        { data: refR, color: () => 'rgba(255,100,100,0.6)', strokeWidth: 2, strokeDashArray: [4, 4], withDots: false },
+                        { data: sampleG, color: () => 'rgba(100,255,100,1)', strokeWidth: 2, withDots: false },
+                        { data: refG, color: () => 'rgba(100,255,100,0.6)', strokeWidth: 2, strokeDashArray: [4, 4], withDots: false },
+                        { data: sampleB, color: () => 'rgba(100,100,255,1)', strokeWidth: 2, withDots: false },
+                        { data: refB, color: () => 'rgba(100,100,255,0.6)', strokeWidth: 2, strokeDashArray: [4, 4], withDots: false },
+                    ];
+
+                    return (
+                        <>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={true} style={styles.graphScroll}>
+                                <LineChart
+                                    data={{
+                                        labels: labels.length > 0 ? labels : ['0'],
+                                        datasets,
+                                    }}
+                                    width={Math.max(500, screenWidth)}
+                                    height={150}
+                                    chartConfig={{
+                                        backgroundColor: '#1e1e1e',
+                                        backgroundGradientFrom: '#1e1e1e',
+                                        backgroundGradientTo: '#1e1e1e',
+                                        color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
+                                        labelColor: () => '#a0a0a0',
+                                        strokeWidth: 2,
+                                    }}
+                                    bezier
+                                    withInnerLines={true}
+                                    withOuterLines={true}
+                                    style={{ borderRadius: 8 }}
+                                />
+                            </ScrollView>
+                            <View style={styles.axisLabels}>
+                                <Text style={styles.axisLabel}>X: Time (s) | Y: Raw Intensity (0-255)</Text>
+                            </View>
+                        </>
+                    );
+                })()}
+            </View>
+        )}
+
+        {/* Graph 4: Individual Channel Trends */}
         {chartTime.length > 1 && (
           <View style={styles.graphBox}>
             <Text style={styles.chartTitle}>🎨 Individual Channel Analysis</Text>
@@ -993,11 +1165,11 @@ function ResultsScreen({ result, onBack }) {
                       width={Math.max(450, screenWidth - 20)}
                       height={120}
                       chartConfig={{
-                        backgroundColor: '#0B1117',
-                        backgroundGradientFrom: '#0B1117',
-                        backgroundGradientTo: '#0B1117',
+                        backgroundColor: '#1e1e1e',
+                        backgroundGradientFrom: '#1e1e1e',
+                        backgroundGradientTo: '#1e1e1e',
                         color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
-                        labelColor: () => '#8B949E',
+                        labelColor: () => '#a0a0a0',
                         strokeWidth: 2,
                       }}
                       bezier
@@ -1015,11 +1187,11 @@ function ResultsScreen({ result, onBack }) {
                       width={Math.max(450, screenWidth - 20)}
                       height={120}
                       chartConfig={{
-                        backgroundColor: '#0B1117',
-                        backgroundGradientFrom: '#0B1117',
-                        backgroundGradientTo: '#0B1117',
+                        backgroundColor: '#1e1e1e',
+                        backgroundGradientFrom: '#1e1e1e',
+                        backgroundGradientTo: '#1e1e1e',
                         color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
-                        labelColor: () => '#8B949E',
+                        labelColor: () => '#a0a0a0',
                         strokeWidth: 2,
                       }}
                       bezier
@@ -1037,11 +1209,11 @@ function ResultsScreen({ result, onBack }) {
                       width={Math.max(450, screenWidth - 20)}
                       height={120}
                       chartConfig={{
-                        backgroundColor: '#0B1117',
-                        backgroundGradientFrom: '#0B1117',
-                        backgroundGradientTo: '#0B1117',
+                        backgroundColor: '#1e1e1e',
+                        backgroundGradientFrom: '#1e1e1e',
+                        backgroundGradientTo: '#1e1e1e',
                         color: (opacity = 1) => `rgba(200, 200, 200, ${opacity})`,
-                        labelColor: () => '#8B949E',
+                        labelColor: () => '#a0a0a0',
                         strokeWidth: 2,
                       }}
                       bezier
@@ -1144,41 +1316,41 @@ function getStatusColor(state) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0B1117',
+    backgroundColor: '#1e1e1e',
     paddingTop: 40,
   },
   header: {
     paddingHorizontal: 16,
     paddingVertical: 12,
-    backgroundColor: '#1C1F26',
-    borderBottomColor: '#30363D',
+    backgroundColor: '#252526',
+    borderBottomColor: '#333333',
     borderBottomWidth: 1,
   },
   title: {
     fontSize: 22,
     fontWeight: 'bold',
-    color: '#F0F6FC',
+    color: '#d4d4d4',
   },
   subtitle: {
     fontSize: 12,
-    color: '#8B949E',
+    color: '#a0a0a0',
     marginTop: 4,
   },
   backButton: {
     fontSize: 14,
-    color: '#238636',
+    color: '#007acc',
     fontWeight: '500',
   },
   resultTitle: {
     fontSize: 16,
     fontWeight: 'bold',
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     marginTop: 4,
   },
   tabs: {
     flexDirection: 'row',
-    backgroundColor: '#1C1F26',
-    borderBottomColor: '#30363D',
+    backgroundColor: '#252526',
+    borderBottomColor: '#333333',
     borderBottomWidth: 1,
   },
   tab: {
@@ -1189,15 +1361,15 @@ const styles = StyleSheet.create({
     borderBottomColor: 'transparent',
   },
   activeTab: {
-    borderBottomColor: '#238636',
+    borderBottomColor: '#007acc',
   },
   tabText: {
     fontSize: 13,
-    color: '#8B949E',
+    color: '#a0a0a0',
     fontWeight: '500',
   },
   activeTabText: {
-    color: '#238636',
+    color: '#007acc',
   },
   cameraContainer: {
     backgroundColor: '#000',
@@ -1214,10 +1386,10 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   sampleROI: {
-    borderColor: '#51CF66',
+    borderColor: '#ffd700', // Yellow/Gold
   },
   referenceROI: {
-    borderColor: '#FFA94D',
+    borderColor: '#007acc', // Blue
   },
   statusBadge: {
     position: 'absolute',
@@ -1228,21 +1400,21 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   badgeText: {
-    color: '#FFF',
+    color: '#FFFFFF',
     fontSize: 11,
     fontWeight: 'bold',
   },
   controlsPanel: {
-    backgroundColor: '#1C1F26',
+    backgroundColor: '#252526',
     paddingHorizontal: 16,
     paddingVertical: 12,
-    borderBottomColor: '#30363D',
+    borderBottomColor: '#333333',
     borderBottomWidth: 1,
     paddingBottom: 110,
   },
   controlLabel: {
     fontSize: 12,
-    color: '#8B949E',
+    color: '#a0a0a0',
     fontWeight: '500',
     marginBottom: 8,
   },
@@ -1252,7 +1424,7 @@ const styles = StyleSheet.create({
   },
   controlValue: {
     fontSize: 12,
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     fontWeight: 'bold',
     textAlign: 'center',
     marginBottom: 8,
@@ -1260,53 +1432,53 @@ const styles = StyleSheet.create({
   chartTitle: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     marginBottom: 4,
   },
   chartAxisLabel: {
     fontSize: 11,
-    color: '#8B949E',
+    color: '#a0a0a0',
     marginBottom: 8,
     fontStyle: 'italic',
   },
   axisLabels: {
     paddingHorizontal: 12,
     paddingVertical: 8,
-    backgroundColor: '#1C1F26',
+    backgroundColor: '#252526',
     borderRadius: 4,
     marginTop: 4,
   },
   axisLabel: {
     fontSize: 11,
-    color: '#A371F7',
+    color: '#007acc',
     fontWeight: '500',
     marginBottom: 2,
   },
   axisLabelY: {
     fontSize: 11,
-    color: '#A371F7',
+    color: '#007acc',
     fontWeight: '500',
   },
   legendText: {
     fontSize: 10,
-    color: '#8B949E',
+    color: '#a0a0a0',
     marginTop: 4,
   },
   graphBox: {
-    backgroundColor: '#1C1F26',
+    backgroundColor: '#252526',
     borderRadius: 8,
     padding: 12,
     marginVertical: 8,
   },
   graphDescription: {
     fontSize: 11,
-    color: '#8B949E',
+    color: '#a0a0a0',
     marginBottom: 8,
     fontStyle: 'italic',
   },
   chartLabel: {
     fontSize: 12,
-    color: '#8B949E',
+    color: '#a0a0a0',
     fontWeight: '500',
     marginBottom: 4,
   },
@@ -1323,18 +1495,18 @@ const styles = StyleSheet.create({
     marginVertical: 6,
   },
   primaryButton: {
-    backgroundColor: '#238636',
+    backgroundColor: '#007acc',
   },
   secondaryButton: {
-    backgroundColor: '#21262D',
-    borderColor: '#30363D',
+    backgroundColor: '#3a3d41',
+    borderColor: '#333333',
     borderWidth: 1,
   },
   dangerButton: {
-    backgroundColor: '#DA3633',
+    backgroundColor: '#d16464',
   },
   buttonText: {
-    color: '#FFF',
+    color: '#FFFFFF',
     fontSize: 14,
     fontWeight: 'bold',
   },
@@ -1344,7 +1516,7 @@ const styles = StyleSheet.create({
     paddingVertical: 20,
   },
   processingText: {
-    color: '#8B949E',
+    color: '#a0a0a0',
     fontSize: 12,
     marginTop: 12,
   },
@@ -1354,7 +1526,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   emptyText: {
-    color: '#8B949E',
+    color: '#a0a0a0',
     fontSize: 16,
     marginBottom: 20,
   },
@@ -1363,8 +1535,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   resultCard: {
-    backgroundColor: '#1C1F26',
-    borderColor: '#30363D',
+    backgroundColor: '#252526',
+    borderColor: '#333333',
     borderWidth: 1,
     borderRadius: 8,
     padding: 16,
@@ -1372,22 +1544,22 @@ const styles = StyleSheet.create({
   },
   resultTime: {
     fontSize: 12,
-    color: '#8B949E',
+    color: '#a0a0a0',
     marginBottom: 8,
   },
   resultV0: {
     fontSize: 14,
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     fontWeight: 'bold',
     marginBottom: 4,
   },
   resultR2: {
     fontSize: 12,
-    color: '#51CF66',
+    color: '#ffd700',
   },
   resultHint: {
     fontSize: 10,
-    color: '#6E40AA',
+    color: '#007acc',
     marginTop: 4,
     fontStyle: 'italic',
   },
@@ -1396,13 +1568,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   resultsBox: {
-    backgroundColor: '#1C1F26',
+    backgroundColor: '#252526',
     borderRadius: 8,
     padding: 16,
     marginVertical: 8,
   },
   phaseBox: {
-    backgroundColor: '#1C1F26',
+    backgroundColor: '#252526',
     borderRadius: 8,
     padding: 16,
     marginVertical: 8,
@@ -1410,7 +1582,7 @@ const styles = StyleSheet.create({
   boxTitle: {
     fontSize: 14,
     fontWeight: 'bold',
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     marginBottom: 12,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
@@ -1419,32 +1591,32 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     paddingVertical: 8,
-    borderBottomColor: '#30363D',
+    borderBottomColor: '#333333',
     borderBottomWidth: 1,
   },
   resultLabel: {
     fontSize: 12,
-    color: '#8B949E',
+    color: '#a0a0a0',
     fontWeight: '500',
   },
   resultValue: {
     fontSize: 12,
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     fontFamily: 'monospace',
     fontWeight: 'bold',
   },
   phaseItem: {
-    backgroundColor: '#0D1117',
+    backgroundColor: '#1e1e1e',
     borderRadius: 6,
     padding: 12,
     marginBottom: 8,
-    borderLeftColor: '#238636',
+    borderLeftColor: '#007acc',
     borderLeftWidth: 3,
   },
   phaseName: {
     fontSize: 12,
     fontWeight: 'bold',
-    color: '#238636',
+    color: '#007acc',
     marginBottom: 8,
   },
   phaseRow: {
@@ -1454,28 +1626,28 @@ const styles = StyleSheet.create({
   },
   phaseLabel: {
     fontSize: 11,
-    color: '#8B949E',
+    color: '#a0a0a0',
   },
   phaseValue: {
     fontSize: 11,
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     fontFamily: 'monospace',
   },
   dataTableContainer: {
-    backgroundColor: '#1C1F26',
+    backgroundColor: '#252526',
     borderRadius: 8,
     padding: 12,
     marginVertical: 8,
   },
   dataTable: {
-    borderColor: '#30363D',
+    borderColor: '#333333',
     borderWidth: 1,
     borderRadius: 6,
     overflow: 'hidden',
   },
   tableHeader: {
     flexDirection: 'row',
-    backgroundColor: '#0D1117',
+    backgroundColor: '#1e1e1e',
     paddingVertical: 8,
     paddingHorizontal: 4,
   },
@@ -1483,20 +1655,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     paddingVertical: 6,
     paddingHorizontal: 4,
-    borderTopColor: '#30363D',
+    borderTopColor: '#333333',
     borderTopWidth: 1,
   },
   tableCell: {
     fontSize: 10,
-    color: '#F0F6FC',
+    color: '#d4d4d4',
     fontFamily: 'monospace',
   },
   timeCell: {
-    flex: 0.8,
+    flex: 1,
+    minWidth: 50,
   },
   absCell: {
     flex: 1,
     textAlign: 'right',
+    minWidth: 70,
   },
   graphsSection: {
     marginVertical: 8,
@@ -1511,21 +1685,21 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 6,
-    backgroundColor: '#0D1117',
-    borderColor: '#30363D',
+    backgroundColor: '#1e1e1e',
+    borderColor: '#333333',
     borderWidth: 1,
   },
   channelToggleActive: {
-    backgroundColor: '#238636',
-    borderColor: '#238636',
+    backgroundColor: '#007acc',
+    borderColor: '#007acc',
   },
   channelToggleText: {
     fontSize: 12,
-    color: '#8B949E',
+    color: '#a0a0a0',
     fontWeight: '500',
   },
   channelToggleTextActive: {
-    color: '#F0F6FC',
+    color: '#FFFFFF',
     fontWeight: 'bold',
   },
   graphScroll: {
@@ -1533,21 +1707,21 @@ const styles = StyleSheet.create({
   },
   chartSubtitle: {
     fontSize: 12,
-    color: '#A371F7',
+    color: '#007acc',
     fontWeight: '600',
     marginTop: 12,
     marginBottom: 6,
   },
   aiCommentBox: {
-    backgroundColor: '#1A1F2E',
-    borderLeftColor: '#A371F7',
+    backgroundColor: '#2a2d3b',
+    borderLeftColor: '#007acc',
     borderLeftWidth: 3,
   },
   assessmentBadge: {
     alignSelf: 'flex-start',
     paddingHorizontal: 10,
     paddingVertical: 5,
-    backgroundColor: '#0D1117',
+    backgroundColor: '#1e1e1e',
     borderRadius: 4,
     marginBottom: 8,
   },
@@ -1558,13 +1732,13 @@ const styles = StyleSheet.create({
   },
   aiCommentText: {
     fontSize: 12,
-    color: '#E6EDF3',
+    color: '#d4d4d4',
     lineHeight: 18,
     marginVertical: 8,
   },
   recommendationText: {
     fontSize: 11,
-    color: '#8B949E',
+    color: '#a0a0a0',
     marginVertical: 4,
     lineHeight: 16,
   },
