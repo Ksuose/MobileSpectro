@@ -229,4 +229,4 @@ async def root():
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run(app, host="https://mobilespectrov2eu-183048999594.europe-west1.run.app", port=port)
+    uvicorn.run(app, host="192.168.1.142", port=port)
