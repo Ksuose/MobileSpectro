@@ -15,7 +15,7 @@ import { LineChart } from 'react-native-chart-kit';
 import Canvas from 'react-native-canvas';
 import * as analysisUtils from './analysisUtils';
 
-const API_URL = 'https://mobilespectrov2eu-183048999594.europe-west1.run.app';
+const API_URL = 'https://mobilespectro-183048999594.europe-west1.run.app';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
 
 const CAMERA_HEIGHT = 400;
