@@ -86,14 +86,25 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('scanner');
   const [absorbanceData, setAbsorbanceData] = useState([]);
 
+  const safeResults = Array.isArray(results) ? results : [];
+
   useEffect(() => {
     // Fetch history on initial load
     const fetchHistory = async () => {
       try {
         const response = await fetch(`${API_URL}/history`);
         if (response.ok) {
-          const historyResults = await response.json();
-          setResults(historyResults);
+          const historyData = await response.json();
+          const historyResults = historyData.scans || [];
+          const transformedResults = historyResults.map(result => ({
+              ...result,
+              id: result.filename,
+              analysis: {
+                  v0: result.v0,
+                  r_squared: result.r_squared
+              }
+          }));
+          setResults(transformedResults);
         } else {
           console.error('Failed to fetch history');
         }
@@ -106,6 +117,7 @@ export default function App() {
   }, []);
 
   const handleDeleteResult = (resultId) => {
+    console.log('Attempting to delete:', resultId); // DEBUG
     Alert.alert(
       'Delete Result',
       'Are you sure you want to delete this scan result?',
@@ -113,10 +125,46 @@ export default function App() {
         { text: 'Cancel', onPress: () => {}, style: 'cancel' },
         {
           text: 'Delete',
-          onPress: () => {
-            setResults((prev) => prev.filter((r) => r.id !== resultId));
-            if (selectedResult?.id === resultId) {
-              setSelectedResult(null);
+          onPress: async () => {
+            try {
+              if (typeof resultId !== 'string' || !resultId.includes('.json')) {
+                  console.error('Invalid resultId for deletion:', resultId);
+                  throw new Error('Cannot delete item with invalid ID.');
+              }
+
+              // Defensively get the last part of the path and remove .json
+              const parts = resultId.split('/');
+              const filename = parts[parts.length - 1];
+              const scan_id = filename.replace('.json', '');
+
+              console.log(`Attempting deletion with scan_id: ${scan_id}`);
+              
+              const response = await fetch(`${API_URL}/records/${scan_id}`, {
+                method: 'DELETE',
+              });
+
+              console.log('Delete response status:', response.status);
+
+              if (!response.ok) {
+                const errorBody = await response.text();
+                console.error('Delete request failed with body:', errorBody);
+                // Use a more specific error message if possible
+                let detail = 'Failed to delete on server.';
+                try {
+                  const parsed = JSON.parse(errorBody);
+                  if(parsed.detail) detail = parsed.detail;
+                } catch(e) {}
+                throw new Error(detail);
+              }
+
+              // Update local state only after successful server deletion
+              setResults((prev) => prev.filter((r) => r.id !== resultId));
+              if (selectedResult?.id === resultId) {
+                setSelectedResult(null);
+              }
+            } catch (err) {
+              console.error('Full error during deletion:', err);
+              Alert.alert('Error', err.message || 'Could not delete the scan from the server.');
             }
           },
           style: 'destructive',
@@ -175,9 +223,18 @@ export default function App() {
       try {
         const response = await fetch(`${API_URL}/history`);
         if (response.ok) {
-          const historyResults = await response.json();
+          const historyData = await response.json();
+          const historyResults = historyData.scans || [];
+          const transformedResults = historyResults.map(result => ({
+              ...result,
+              id: result.filename,
+              analysis: {
+                  v0: result.v0,
+                  r_squared: result.r_squared
+              }
+          }));
           // Sort results from newest to oldest
-          const sortedResults = historyResults.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+          const sortedResults = transformedResults.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
           setResults(sortedResults);
         } else {
           Alert.alert('Error', 'Failed to load scan history from the server.');
@@ -314,37 +371,59 @@ export default function App() {
   const handleStopScan = async () => {
     setAppState(STATES.PROCESSING);
 
-    if (absorbanceDataRef.current.length > 5) {
-      try {
-        const analysis = analysisUtils.analyzeKineticData(
-          absorbanceDataRef.current
-        );
+    if (absorbanceDataRef.current.length < 6) {
+        Alert.alert('Error', 'Not enough data points collected');
+        setAppState(STATES.IDLE);
+        return;
+    }
 
-        const newResult = {
-          id: Date.now(),
-          timestamp: new Date().toLocaleString(),
-          absorbanceData: absorbanceDataRef.current,
-          analysis,
+    const tempId = Date.now();
+    let newResult;
+
+    try {
+        const analysis = analysisUtils.analyzeKineticData(absorbanceDataRef.current);
+        newResult = {
+            id: tempId,
+            timestamp: new Date().toLocaleString(),
+            absorbanceData: absorbanceDataRef.current,
+            analysis,
         };
 
-        setResults([newResult, ...results]);
+        // Optimistically update UI
+        setResults(prev => [newResult, ...prev]);
         setSelectedResult(newResult);
         setActiveTab('results');
 
         // Send to backend
-        await fetch(`${API_URL}/save-result`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newResult),
+        const response = await fetch(`${API_URL}/save-result`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newResult),
         });
-      } catch (err) {
-        Alert.alert('Error', 'Failed to process scan: ' + err.message);
-      }
-    } else {
-      Alert.alert('Error', 'Not enough data points collected');
-    }
 
-    setAppState(STATES.IDLE);
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ detail: 'Failed to save on server.' }));
+            throw new Error(errorData.detail);
+        }
+
+        const savedData = await response.json();
+        const finalFilename = savedData.filename.split('/').pop(); // Get just the filename
+
+        // Update the result with the permanent ID from the server
+        const finalResult = { ...newResult, id: finalFilename };
+        setResults(prev => prev.map(r => (r.id === tempId ? finalResult : r)));
+        setSelectedResult(finalResult);
+
+    } catch (err) {
+        Alert.alert('Error', 'Failed to process scan: ' + err.message);
+        // Rollback optimistic update
+        if (newResult) {
+            setResults(prev => prev.filter(r => r.id !== tempId));
+            setSelectedResult(null);
+        }
+    } finally {
+        setAppState(STATES.IDLE);
+    }
   };
 
   const handleCancel = () => {
@@ -368,6 +447,34 @@ export default function App() {
   const referenceLeft = (cameraInnerWidth - referenceWidth) / 2;
   const referenceHeightPx = CAMERA_HEIGHT * (referenceROIConfig.heightPercent / 100);
   const referenceTopPx = (CAMERA_HEIGHT * referenceROIConfig.centerYPercent) / 100 - referenceHeightPx / 2;
+
+  const handleResultPress = async (result) => {
+    if (result.absorbanceData) {
+      // It's a local result with full data, just select it
+      setSelectedResult(result);
+    } else if (result.filename) {
+      // It's a history result, fetch the full data from the backend
+      try {
+        // Extract scan_id from filename (e.g., "records/scan_20231027_103000.json")
+        const parts = result.filename.split('/');
+        const scan_id_with_ext = parts[parts.length - 1];
+        const scan_id = scan_id_with_ext.replace('.json', '');
+        
+        const response = await fetch(`${API_URL}/records/${scan_id}`);
+        
+        if (response.ok) {
+          const fullResult = await response.json();
+          // Ensure the fetched result has a consistent ID for the key
+          setSelectedResult({ ...fullResult, id: result.id });
+        } else {
+          Alert.alert('Error', `Failed to load full scan data. Status: ${response.status}`);
+        }
+      } catch (err) {
+        console.error('Failed to fetch full scan data:', err);
+        Alert.alert('Error', 'Could not connect to the server to load the scan data.');
+      }
+    }
+  };
 
   if (activeTab === 'results' && selectedResult) {
     return (
@@ -408,7 +515,7 @@ export default function App() {
           </TouchableOpacity>
         </View>
 
-        {results.length === 0 ? (
+        {safeResults.length === 0 ? (
           <View style={styles.emptyBox}>
             <Text style={styles.emptyText}>No scan results yet</Text>
             <TouchableOpacity
@@ -420,11 +527,11 @@ export default function App() {
           </View>
         ) : (
           <ScrollView style={styles.resultList}>
-            {results.map((result) => (
+            {safeResults.map((result) => (
               <TouchableOpacity
                 key={result.id}
                 style={styles.resultCard}
-                onPress={() => setSelectedResult(result)}
+                onPress={() => handleResultPress(result)}
                 onLongPress={() => handleDeleteResult(result.id)}
                 delayLongPress={500}
               >
@@ -832,6 +939,28 @@ function AnalysisScreen() {
 }
 
 function ResultsScreen({ result, onBack }) {
+  // Guard clause for missing or invalid absorbance data
+  if (!result || !Array.isArray(result.absorbanceData) || result.absorbanceData.length === 0) {
+    return (
+      <ScrollView style={styles.resultContent}>
+        <View style={styles.resultsBox}>
+          <Text style={styles.boxTitle}>Data Error</Text>
+          <Text style={{ color: '#d4d4d4', lineHeight: 18 }}>
+            The selected scan result is missing the raw absorbance data needed for display. This can happen if the data was not saved correctly or if it's an older, incompatible record.
+          </Text>
+        </View>
+        <TouchableOpacity
+          style={[styles.button, styles.secondaryButton, { margin: 12 }]}
+          onPress={onBack}
+        >
+          <Text style={styles.buttonText}>← Back to Results</Text>
+        </TouchableOpacity>
+      </ScrollView>
+    );
+  }
+
+  const analysis = result.analysis || {}; // Ensure analysis object exists
+
   const { chartTime, chartR, chartG, chartB } = analysisUtils.prepareChartData(
     result.absorbanceData
   );
@@ -857,12 +986,12 @@ function ResultsScreen({ result, onBack }) {
       setAiLoading(true);
       const duration = result.absorbanceData[result.absorbanceData.length - 1]?.time || 0;
       const analysisPayload = {
-        v0: result.analysis.v0,
-        r_squared: result.analysis.r_squared,
-        primaryChannel: result.analysis.primaryChannel,
-        startTime: result.analysis.startTime,
-        endTime: result.analysis.endTime,
-        phases: result.analysis.phases,
+        v0: analysis.v0,
+        r_squared: analysis.r_squared,
+        primaryChannel: analysis.primaryChannel,
+        startTime: analysis.startTime,
+        endTime: analysis.endTime,
+        phases: analysis.phases,
         duration_seconds: duration,
         num_data_points: result.absorbanceData.length,
       };
@@ -902,19 +1031,21 @@ function ResultsScreen({ result, onBack }) {
         <Text style={styles.boxTitle}>Analysis Results</Text>
         <View style={styles.resultRow}>
           <Text style={styles.resultLabel}>V₀ (Initial Velocity):</Text>
-          <Text style={styles.resultValue}>{result.analysis.v0.toFixed(6)} A/s</Text>
+          <Text style={styles.resultValue}>{(analysis.v0 || 0).toFixed(6)} A/s</Text>
         </View>
         <View style={styles.resultRow}>
           <Text style={styles.resultLabel}>Time Window:</Text>
-          <Text style={styles.resultValue}>{result.analysis.startTime.toFixed(2)}s - {result.analysis.endTime.toFixed(2)}s</Text>
+          <Text style={styles.resultValue}>
+            {typeof analysis.startTime === 'number' ? `${analysis.startTime.toFixed(2)}s` : 'N/A'} - {typeof analysis.endTime === 'number' ? `${analysis.endTime.toFixed(2)}s` : 'N/A'}
+          </Text>
         </View>
         <View style={styles.resultRow}>
           <Text style={styles.resultLabel}>R² (Fit Quality):</Text>
-          <Text style={styles.resultValue}>{result.analysis.r_squared.toFixed(4)}</Text>
+          <Text style={styles.resultValue}>{(analysis.r_squared || 0).toFixed(4)}</Text>
         </View>
         <View style={styles.resultRow}>
           <Text style={styles.resultLabel}>Primary Channel:</Text>
-          <Text style={styles.resultValue}>{result.analysis.primaryChannel.toUpperCase()}</Text>
+          <Text style={styles.resultValue}>{(analysis.primaryChannel || 'N/A').toUpperCase()}</Text>
         </View>
       </View>
 
@@ -1228,11 +1359,11 @@ function ResultsScreen({ result, onBack }) {
       </View>
 
       {/* Kinetic Phase Analysis with Timestamps */}
-      {result.analysis.phases && result.analysis.phases.length > 0 && (
+      {analysis.phases && analysis.phases.length > 0 && (
         <View style={styles.phaseBox}>
           <Text style={styles.boxTitle}>📊 Kinetic Phases with Timestamps</Text>
           <Text style={styles.graphDescription}>Linear regression analysis on specific time intervals - verify these times on the Progress Curve above</Text>
-          {result.analysis.phases.map((phase, idx) => (
+          {analysis.phases.map((phase, idx) => (
             <View key={idx} style={styles.phaseItem}>
               <Text style={styles.phaseName}>{phase.name}</Text>
               <View style={styles.phaseRow}>
@@ -1256,31 +1387,33 @@ function ResultsScreen({ result, onBack }) {
       <View style={styles.dataTableContainer}>
         <Text style={styles.boxTitle}>📋 Raw Scan Data</Text>
         <Text style={styles.graphDescription}>All absorbance measurements from the scan</Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={true}>
-          <View style={styles.dataTable}>
-            <View style={styles.tableHeader}>
-              <Text style={[styles.tableCell, styles.timeCell]}>Time (s)</Text>
-              <Text style={[styles.tableCell, styles.absCell]}>A(R)</Text>
-              <Text style={[styles.tableCell, styles.absCell]}>A(G)</Text>
-              <Text style={[styles.tableCell, styles.absCell]}>A(B)</Text>
-            </View>
-            {result.absorbanceData.slice(0, 30).map((data, idx) => (
-              <View key={idx} style={styles.tableRow}>
-                <Text style={[styles.tableCell, styles.timeCell]}>
-                  {data.time.toFixed(1)}
-                </Text>
-                <Text style={[styles.tableCell, styles.absCell]}>
-                  {data.abs.r.toFixed(4)}
-                </Text>
-                <Text style={[styles.tableCell, styles.absCell]}>
-                  {data.abs.g.toFixed(4)}
-                </Text>
-                <Text style={[styles.tableCell, styles.absCell]}>
-                  {data.abs.b.toFixed(4)}
-                </Text>
+        <ScrollView style={{ height: 300 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={true}>
+            <View style={styles.dataTable}>
+              <View style={styles.tableHeader}>
+                <Text style={[styles.tableCell, styles.timeCell]}>Time (s)</Text>
+                <Text style={[styles.tableCell, styles.absCell]}>A(R)</Text>
+                <Text style={[styles.tableCell, styles.absCell]}>A(G)</Text>
+                <Text style={[styles.tableCell, styles.absCell]}>A(B)</Text>
               </View>
-            ))}
-          </View>
+              {result.absorbanceData.map((data, idx) => (
+                <View key={idx} style={styles.tableRow}>
+                  <Text style={[styles.tableCell, styles.timeCell]}>
+                    {data.time.toFixed(1)}
+                  </Text>
+                  <Text style={[styles.tableCell, styles.absCell]}>
+                    {data.abs.r.toFixed(4)}
+                  </Text>
+                  <Text style={[styles.tableCell, styles.absCell]}>
+                    {data.abs.g.toFixed(4)}
+                  </Text>
+                  <Text style={[styles.tableCell, styles.absCell]}>
+                    {data.abs.b.toFixed(4)}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </ScrollView>
         </ScrollView>
       </View>
 
@@ -1665,12 +1798,12 @@ const styles = StyleSheet.create({
   },
   timeCell: {
     flex: 1,
-    minWidth: 50,
+    minWidth: 80,
   },
   absCell: {
     flex: 1,
     textAlign: 'right',
-    minWidth: 70,
+    minWidth: 100,
   },
   graphsSection: {
     marginVertical: 8,

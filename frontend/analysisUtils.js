@@ -39,51 +39,61 @@ export const calculateAbsorbance = (sampleRGB, blankSampleRGB, referenceRGB, bla
 };
 
 export function analyzeKineticData(absorbanceData) {
-  if (absorbanceData.length < 5) {
+  if (!Array.isArray(absorbanceData) || absorbanceData.length < 5) {
     throw new Error('Not enough data points for analysis.');
   }
 
   const channels = ['r', 'g', 'b'];
-  let bestFit = { r_squared: -Infinity };
+  let bestFit = { r_squared: -Infinity, v0: 0, primaryChannel: 'none', startTime: null, endTime: null, phases: [] };
 
-  channels.forEach(channel => {
-    const data = absorbanceData.map(d => ({ x: d.time, y: d.abs[channel] }));
-    
-    // Attempt to find the most linear region for V0 calculation.
-    // This looks for the best R^2 from a moving window of points.
+  for (const channel of channels) {
+    const data = absorbanceData
+      .filter(d => d && d.time != null && d.abs && typeof d.abs[channel] === 'number')
+      .map(d => ({ x: d.time, y: d.abs[channel] }));
+
+    if (data.length < 5) {
+      continue;
+    }
+
     const windowSize = Math.max(5, Math.floor(data.length * 0.25));
     let bestWindow = { r_squared: -Infinity, slope: 0, startTime: 0, endTime: 0 };
 
-    for (let i = 0; i <= data.length - windowSize; i++) {
-        const window = data.slice(i, i + windowSize);
-        const lr = linearRegression(window.map(p => p.x), window.map(p => p.y));
-        if (lr.r_squared > bestWindow.r_squared) {
-            bestWindow = {
-                r_squared: lr.r_squared,
-                slope: lr.slope,
-                startTime: window[0].x,
-                endTime: window[window.length - 1].x,
-            };
-        }
+    // To ensure we find the *initial* rate, we limit the search to the first 40% of the data points.
+    const searchLimit = Math.floor(data.length * 0.4);
+
+    for (let i = 0; i <= searchLimit && i <= data.length - windowSize; i++) {
+      const windowData = data.slice(i, i + windowSize);
+      const x = windowData.map(p => p.x);
+      const y = windowData.map(p => p.y);
+      const lr = linearRegression(x, y);
+
+      if (lr.r_squared > bestWindow.r_squared) {
+        bestWindow = {
+          r_squared: lr.r_squared,
+          slope: lr.slope,
+          startTime: windowData[0].x,
+          endTime: windowData[windowData.length - 1].x,
+        };
+      }
     }
       
     if (bestWindow.r_squared > bestFit.r_squared) {
-        bestFit = {
-            v0: bestWindow.slope,
-            r_squared: bestWindow.r_squared,
-            primaryChannel: channel,
-            startTime: bestWindow.startTime,
-            endTime: bestWindow.endTime,
-            phases: [{ // Simplified to a single phase representing the initial rate
-                name: 'Initial Rate',
-                timeStart: bestWindow.startTime.toFixed(2),
-                timeEnd: bestWindow.endTime.toFixed(2),
-                slope: bestWindow.slope,
-                r_squared: bestWindow.r_squared,
-            }]
-        };
+      bestFit = {
+        v0: bestWindow.slope,
+        r_squared: bestWindow.r_squared,
+        primaryChannel: channel,
+        startTime: bestWindow.startTime,
+        endTime: bestWindow.endTime,
+        phases: [{
+          name: 'Initial Rate',
+          timeStart: bestWindow.startTime.toFixed(2),
+          timeEnd: bestWindow.endTime.toFixed(2),
+          slope: bestWindow.slope,
+          r_squared: bestWindow.r_squared,
+        }]
+      };
     }
-  });
+  }
 
   return bestFit;
 }
@@ -98,6 +108,9 @@ export function prepareChartData(absorbanceData) {
 
 function linearRegression(x, y) {
   const n = x.length;
+  if (n < 2) {
+    return { slope: 0, intercept: 0, r_squared: 0 };
+  }
   let sum_x = 0;
   let sum_y = 0;
   let sum_xy = 0;
@@ -112,7 +125,13 @@ function linearRegression(x, y) {
     sum_yy += y[i] * y[i];
   }
 
-  const slope = (n * sum_xy - sum_x * sum_y) / (n * sum_xx - sum_x * sum_x);
+  const denominator = (n * sum_xx - sum_x * sum_x);
+  if (denominator === 0) {
+    return { slope: 0, intercept: 0, r_squared: 0 };
+  }
+
+
+  const slope = (n * sum_xy - sum_x * sum_y) / denominator;
   const intercept = (sum_y - slope * sum_x) / n;
   const r_squared = Math.pow(
     (n * sum_xy - sum_x * sum_y) /
@@ -120,33 +139,58 @@ function linearRegression(x, y) {
     2
   );
 
-  return { slope, intercept, r_squared };
+  return { slope, intercept, r_squared: isNaN(r_squared) ? 0 : r_squared };
 }
 
 export function calculateKineticParameters(data) {
-    // Michaelis-Menten
-    // For simplicity, this is not a non-linear fit but an estimation.
-    // A proper implementation would use a non-linear regression library.
-    const vmax = Math.max(...data.map(d => d.v0));
-    const km = data.find(d => d.v0 >= vmax / 2)?.s || 0;
+    if (data.length < 2) {
+        return {
+            vmax: 0,
+            km: 0,
+            michaelisMenten: [],
+            lineweaverBurk: [],
+            hanesWoolf: [],
+        };
+    }
 
-    const michaelisMenten = data.map(d => ({x: d.s, y: d.v0}));
+    const michaelisMenten = data.map(d => ({ x: d.s, y: d.v0 }));
+    let validMethods = 0;
+    let total_vmax = 0;
+    let total_km = 0;
 
     // Lineweaver-Burk
     const lineweaverBurkData = data.filter(d => d.s > 0 && d.v0 > 0).map(d => ({ x: 1 / d.s, y: 1 / d.v0 }));
-    const lb_lr = linearRegression(lineweaverBurkData.map(p => p.x), lineweaverBurkData.map(p => p.y));
-    const lb_vmax = 1 / lb_lr.intercept;
-    const lb_km = lb_lr.slope * lb_vmax;
+    if (lineweaverBurkData.length > 1) {
+        const lb_lr = linearRegression(lineweaverBurkData.map(p => p.x), lineweaverBurkData.map(p => p.y));
+        if (lb_lr.intercept !== 0) {
+            const lb_vmax = 1 / lb_lr.intercept;
+            const lb_km = lb_lr.slope * lb_vmax;
+            if (isFinite(lb_vmax) && isFinite(lb_km)) {
+                total_vmax += lb_vmax;
+                total_km += lb_km;
+                validMethods++;
+            }
+        }
+    }
 
     // Hanes-Woolf
     const hanesWoolfData = data.filter(d => d.s > 0 && d.v0 > 0).map(d => ({ x: d.s, y: d.s / d.v0 }));
-    const hw_lr = linearRegression(hanesWoolfData.map(p => p.x), hanesWoolfData.map(p => p.y));
-    const hw_vmax = 1 / hw_lr.slope;
-    const hw_km = hw_lr.intercept * hw_vmax;
-    
+    if (hanesWoolfData.length > 1) {
+        const hw_lr = linearRegression(hanesWoolfData.map(p => p.x), hanesWoolfData.map(p => p.y));
+        if (hw_lr.slope !== 0) {
+            const hw_vmax = 1 / hw_lr.slope;
+            const hw_km = hw_lr.intercept * hw_vmax;
+            if (isFinite(hw_vmax) && isFinite(hw_km)) {
+                total_vmax += hw_vmax;
+                total_km += hw_km;
+                validMethods++;
+            }
+        }
+    }
+
     return {
-        vmax: (lb_vmax + hw_vmax) / 2, // Average of the two linear methods
-        km: (lb_km + hw_km) / 2,
+        vmax: validMethods > 0 ? total_vmax / validMethods : 0,
+        km: validMethods > 0 ? total_km / validMethods : 0,
         michaelisMenten,
         lineweaverBurk: lineweaverBurkData,
         hanesWoolf: hanesWoolfData,

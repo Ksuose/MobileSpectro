@@ -16,6 +16,9 @@ const { width: screenWidth } = Dimensions.get('window');
 export function KineticAnalysisScreen({ results }) {
   const [selectedScanIds, setSelectedScanIds] = useState([]);
   const [substrateConcentrations, setSubstrateConcentrations] = useState({});
+  const [analysisData, setAnalysisData] = useState(null);
+
+  const safeResults = Array.isArray(results) ? results : [];
 
   const handleToggleScan = (id) => {
     setSelectedScanIds((prev) =>
@@ -27,10 +30,10 @@ export function KineticAnalysisScreen({ results }) {
     setSubstrateConcentrations((prev) => ({ ...prev, [id]: text }));
   };
 
-  const analysisData = useMemo(() => {
+  const handleStartAnalysis = () => {
     const data = selectedScanIds
       .map((id) => {
-        const result = results.find((r) => r.id === id);
+        const result = safeResults.find((r) => r.id === id);
         const concentration = parseFloat(substrateConcentrations[id]);
         if (result && !isNaN(concentration)) {
           return {
@@ -42,10 +45,14 @@ export function KineticAnalysisScreen({ results }) {
       })
       .filter(Boolean);
 
-    if (data.length < 2) return null;
+    if (data.length < 2) {
+      alert('Please select at least two scans with valid substrate concentrations.');
+      return;
+    }
 
-    return analysisUtils.calculateKineticParameters(data);
-  }, [selectedScanIds, substrateConcentrations, results]);
+    const calculatedData = analysisUtils.calculateKineticParameters(data);
+    setAnalysisData(calculatedData);
+  };
 
   const renderChart = (title, data, xLabel, yLabel) => {
     if (!data || data.length === 0) return null;
@@ -80,7 +87,7 @@ export function KineticAnalysisScreen({ results }) {
       </View>
 
       <View style={styles.scanSelection}>
-        {results.map((result) => (
+        {safeResults.map((result) => (
           <View key={result.id} style={styles.scanRow}>
             <TouchableOpacity
               style={[
@@ -102,6 +109,10 @@ export function KineticAnalysisScreen({ results }) {
           </View>
         ))}
       </View>
+
+      <TouchableOpacity style={styles.button} onPress={handleStartAnalysis}>
+        <Text style={styles.buttonText}>Analyze</Text>
+      </TouchableOpacity>
 
       {analysisData && (
         <View style={styles.resultsContainer}>
@@ -202,6 +213,17 @@ const styles = StyleSheet.create({
     color: '#d4d4d4',
     textAlign: 'center',
     padding: 4,
+  },
+  button: {
+    backgroundColor: '#007acc',
+    padding: 12,
+    borderRadius: 4,
+    alignItems: 'center',
+    margin: 16,
+  },
+  buttonText: {
+    color: 'white',
+    fontWeight: 'bold',
   },
   resultsContainer: {
     padding: 16,

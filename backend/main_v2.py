@@ -159,12 +159,32 @@ async def save_result(result_data: Dict[str, Any]):
 
 @app.get("/history")
 async def get_scan_history():
-    """Get list of all saved scans"""
-    with app_lock:
-        return {
-            "count": len(state.scan_history),
-            "scans": state.scan_history[-20:]  # Return last 20
-        }
+    """Get list of all saved scans from the records directory"""
+    records = []
+    for filename in sorted(os.listdir(RECORDS_DIR), reverse=True):
+        if filename.endswith(".json"):
+            filepath = os.path.join(RECORDS_DIR, filename)
+            try:
+                with open(filepath, 'r') as f:
+                    data = json.load(f)
+                
+                # Extract summary data
+                analysis = data.get("analysis", {})
+                records.append({
+                    "filename": filename,
+                    "timestamp": data.get("timestamp"),
+                    "v0": analysis.get("v0"),
+                    "r_squared": analysis.get("r_squared"),
+                    "primaryChannel": analysis.get("primaryChannel"),
+                })
+            except Exception as e:
+                # Log error but continue processing other files
+                print(f"Error processing record {filename}: {e}")
+
+    return {
+        "count": len(records),
+        "scans": records
+    }
 
 
 @app.get("/records/{scan_id}")
@@ -181,6 +201,28 @@ async def get_scan_record(scan_id: str):
         
         return data
         
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/records/{scan_id}")
+async def delete_scan_record(scan_id: str):
+    """Delete a specific scan record"""
+    try:
+        filepath = os.path.join(RECORDS_DIR, f"{scan_id}.json")
+
+        if not os.path.exists(filepath):
+            # Changed to return 200 OK if not found, as client will just see it as gone
+            return {"status": "not_found", "filename": f"{scan_id}.json"}
+
+        os.remove(filepath)
+
+        # Also remove from in-memory history if it exists
+        with app_lock:
+            state.scan_history = [s for s in state.scan_history if s.get("filename") != f"{scan_id}.json"]
+
+        return {"status": "deleted", "filename": f"{scan_id}.json"}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
