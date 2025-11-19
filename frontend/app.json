@@ -30,6 +30,10 @@
       "eas": {
         "projectId": "cf664135-2531-48c4-8cbe-bd9baaabbd5e"
       }
-    }
+    },
+    "plugins": [
+      "expo-dev-client",
+      "@serserm/react-native-turbo-serialport"
+    ]
   }
 }

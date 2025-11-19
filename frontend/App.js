@@ -15,6 +15,7 @@ import { LineChart } from 'react-native-chart-kit';
 import Canvas from 'react-native-canvas';
 import * as analysisUtils from './analysisUtils';
 import { KineticAnalysisScreen } from './KineticAnalysisScreen';
+import StripReaderScreen from './StripReaderScreen';
 
 const API_URL = 'https://mobilespectro-183048999594.europe-west1.run.app';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -571,6 +572,29 @@ export default function App() {
     );
   }
 
+  if (activeTab === 'strips') {
+    return (
+      <View style={styles.container}>
+        {/* Top Tab Bar */}
+        <View style={styles.tabs}>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('scanner')}>
+            <Text style={styles.tabText}>📷 Scanner</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('results')}>
+            <Text style={styles.tabText}>📊 Results</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('analysis')}>
+            <Text style={styles.tabText}>📈 Analysis</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.tab, styles.activeTab]}>
+            <Text style={[styles.tabText, styles.activeTabText]}>🔬 Strip Reader</Text>
+          </TouchableOpacity>
+        </View>
+        <StripReaderScreen />
+      </View>
+    );
+  }
+
   return (
     <View style={styles.container}>
       {/* Top Tab Bar - Persistent */}
@@ -612,6 +636,19 @@ export default function App() {
             ]}
           >
             📈 Analysis
+          </Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.tab, activeTab === 'strips' && styles.activeTab]}
+          onPress={() => setActiveTab('strips')}
+        >
+          <Text
+            style={[
+              styles.tabText,
+              activeTab === 'strips' && styles.activeTabText,
+            ]}
+          >
+            🔬 Strip Reader
           </Text>
         </TouchableOpacity>
       </View>

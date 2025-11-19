@@ -10,8 +10,10 @@
   },
   "dependencies": {
     "@react-native-community/slider": "^5.1.1",
+    "@serserm/react-native-turbo-serialport": "^2.2.2",
     "expo": "~54.0.24",
     "expo-camera": "^17.0.9",
+    "expo-dev-client": "^6.0.18",
     "expo-status-bar": "~3.0.8",
     "react": "19.1.0",
     "react-native": "0.81.5",
