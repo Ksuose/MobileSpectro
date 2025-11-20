@@ -198,99 +198,115 @@ export function calculateKineticParameters(data) {
             };
         }
         
-        // Packet Parser
-        export const parseDevicePacket = (base64String) => {
-          const buffer = Buffer.from(base64String, 'base64');
-          const x = buffer.readFloatLE(4);
-          const y = buffer.readFloatLE(8);
-          return { x, y };
-        };
+// Packet Parser
+export const parseDevicePacket = (base64String) => {
+  try {
+    const buffer = Buffer.from(base64String, 'base64');
+
+    // Check packet length to determine type
+    if (buffer.length === 12) {
+      // Data packet
+      const x = buffer.readFloatLE(4);
+      const y = buffer.readFloatLE(8);
+      return { type: 'data', payload: { x, y } };
+    } else if (buffer.length === 8) {
+      // Status/ACK packet
+      return { type: 'status', payload: buffer.toString('hex') };
+    } else {
+      // Unknown packet
+      console.warn('Received unknown packet:', buffer.toString('hex'));
+      return { type: 'unknown', payload: buffer.toString('hex') };
+    }
+  } catch (error) {
+    console.error('Error parsing device packet:', error);
+    return { type: 'error', payload: 'Parsing failed' }; // Return a safe default on error
+  }
+};
         
-        // Command Builders
-        export const createLEDCommand = (isOn) => {
-          const buffer = Buffer.alloc(5);
-          buffer.writeUInt8(0x6B, 0);
-          buffer.writeUInt8(0x0C, 1);
-          buffer.writeUInt8(isOn ? 1 : 0, 2);
-          buffer.writeUInt8(0x00, 3);
-          buffer.writeUInt8(0x8F, 4);
-          return buffer;
-        };
+// Command Builders
+export const createLEDCommand = (isOn) => {
+  const buffer = Buffer.alloc(5);
+  buffer.writeUInt8(0x6B, 0); // Header
+  buffer.writeUInt8(0x0C, 1); // Cmd
+  buffer.writeUInt8(0x00, 2); // Sub
+  buffer.writeUInt8(isOn ? 1 : 0, 3); // Value
+  buffer.writeUInt8(0x64, 4); // Footer
+  return buffer;
+};
+
+export const getHandshakeCommands = () => {
+  const handshake1 = Buffer.from([0x6B, 0x67, 0x00, 0x64]);
+  const handshake2 = Buffer.from([0x6B, 0x66, 0x00, 0x64]);
+  return [handshake1, handshake2];
+};
         
-        export const getHandshakeCommands = () => {
-          const handshake1 = Buffer.from([0x6B, 0x67, 0x01, 0x8F]);
-          const handshake2 = Buffer.from([0x6B, 0x66, 0x01, 0x8F]);
-          return [handshake1, handshake2];
-        };
-        
-        export const createCVPacket = (params) => {
-          const buffer = Buffer.alloc(31);
-          buffer.writeUInt8(0x6B, 0);
-          buffer.writeUInt8(0x01, 1); // Command ID placeholder
-          buffer.writeUInt8(0x00, 2); // Command ID placeholder
-          buffer.writeUInt8(0x00, 3); // Packet ID
-          buffer.writeFloatLE(parseFloat(params.startVoltage), 4);
-          buffer.writeFloatLE(parseFloat(params.vertex1), 8);
-          buffer.writeFloatLE(parseFloat(params.vertex2), 12);
-          buffer.writeFloatLE(parseFloat(params.scanRate), 16);
-          buffer.writeUInt8(parseInt(params.cycles), 20);
-          // Fill the rest with zeros, then the footer
-          for (let i = 21; i < 30; i++) {
-            buffer.writeUInt8(0, i);
-          }
-            buffer.writeUInt8(0x8F, 30);
-            return buffer;
-          };
-          
-          export const createLSVPacket = (params) => {
-            const buffer = Buffer.alloc(29);
-            buffer.writeUInt8(0x6B, 0);
-            buffer.writeUInt8(0x02, 1); // Command ID placeholder
-            buffer.writeUInt8(0x00, 2); // Command ID placeholder
-            buffer.writeUInt8(0x00, 3); // Packet ID
-            buffer.writeFloatLE(parseFloat(params.startVoltage), 4);
-            buffer.writeFloatLE(parseFloat(params.endVoltage), 8);
-            buffer.writeFloatLE(parseFloat(params.scanRate), 12);
-            // Fill the rest with zeros, then the footer
-            for (let i = 16; i < 28; i++) {
-              buffer.writeUInt8(0, i);
-            }
-            buffer.writeUInt8(0x8F, 28);
-            return buffer;
-          };
-          
-          export const createSWVPacket = (params) => {
-            const buffer = Buffer.alloc(29);
-            buffer.writeUInt8(0x6B, 0);
-            buffer.writeUInt8(0x03, 1); // Command ID placeholder
-            buffer.writeUInt8(0x00, 2); // Command ID placeholder
-            buffer.writeUInt8(0x00, 3); // Packet ID
-            buffer.writeFloatLE(parseFloat(params.startVoltage), 4);
-            buffer.writeFloatLE(parseFloat(params.endVoltage), 8);
-            buffer.writeFloatLE(parseFloat(params.amplitude), 12);
-            buffer.writeFloatLE(parseFloat(params.frequency), 16);
-            // Fill the rest with zeros, then the footer
-            for (let i = 20; i < 28; i++) {
-              buffer.writeUInt8(0, i);
-            }
-            buffer.writeUInt8(0x8F, 28);
-            return buffer;
-          };
-          
-          export const createAMPPacket = (params) => {
-            const buffer = Buffer.alloc(27);
-            buffer.writeUInt8(0x6B, 0);
-            buffer.writeUInt8(0x04, 1); // Command ID placeholder
-            buffer.writeUInt8(0x00, 2); // Command ID placeholder
-            buffer.writeUInt8(0x00, 3); // Packet ID
-            buffer.writeFloatLE(parseFloat(params.voltage), 4);
-            buffer.writeFloatLE(parseFloat(params.duration), 8);
-            buffer.writeFloatLE(parseFloat(params.interval), 12);
-            // Fill the rest with zeros, then the footer
-            for (let i = 16; i < 26; i++) {
-              buffer.writeUInt8(0, i);
-            }
-            buffer.writeUInt8(0x8F, 26);
-            return buffer;
-          };
-          
+export const createCVPacket = (params) => {
+  const buffer = Buffer.alloc(31);
+  buffer.writeUInt8(0x6B, 0);
+  buffer.writeUInt8(0x0C, 1); // Correct Command ID
+  buffer.writeUInt8(0xFE, 2); // Correct Sub-Command ID
+  buffer.writeUInt8(0x00, 3); // Packet ID
+  buffer.writeFloatLE(parseFloat(params.startVoltage), 4);
+  buffer.writeFloatLE(parseFloat(params.vertex1), 8);
+  buffer.writeFloatLE(parseFloat(params.vertex2), 12);
+  buffer.writeFloatLE(parseFloat(params.scanRate), 16);
+  buffer.writeUInt8(parseInt(params.cycles), 20);
+  // Fill the rest with zeros, then the footer
+  for (let i = 21; i < 30; i++) {
+    buffer.writeUInt8(0, i);
+  }
+    buffer.writeUInt8(0x8F, 30); // Use original footer
+    return buffer;
+  };
+  
+  export const createLSVPacket = (params) => {
+    const buffer = Buffer.alloc(29);
+    buffer.writeUInt8(0x6B, 0);
+    buffer.writeUInt8(0x02, 1); // Command ID placeholder
+    buffer.writeUInt8(0x00, 2); // Command ID placeholder
+    buffer.writeUInt8(0x00, 3); // Packet ID
+    buffer.writeFloatLE(parseFloat(params.startVoltage), 4);
+    buffer.writeFloatLE(parseFloat(params.endVoltage), 8);
+    buffer.writeFloatLE(parseFloat(params.scanRate), 12);
+    // Fill the rest with zeros, then the footer
+    for (let i = 16; i < 28; i++) {
+      buffer.writeUInt8(0, i);
+    }
+    buffer.writeUInt8(0x8F, 28); // Use original footer
+    return buffer;
+  };
+  
+  export const createSWVPacket = (params) => {
+    const buffer = Buffer.alloc(29);
+    buffer.writeUInt8(0x6B, 0);
+    buffer.writeUInt8(0x03, 1); // Command ID placeholder
+    buffer.writeUInt8(0x00, 2); // Command ID placeholder
+    buffer.writeUInt8(0x00, 3); // Packet ID
+    buffer.writeFloatLE(parseFloat(params.startVoltage), 4);
+    buffer.writeFloatLE(parseFloat(params.endVoltage), 8);
+    buffer.writeFloatLE(parseFloat(params.amplitude), 12);
+    buffer.writeFloatLE(parseFloat(params.frequency), 16);
+    // Fill the rest with zeros, then the footer
+    for (let i = 20; i < 28; i++) {
+      buffer.writeUInt8(0, i);
+    }
+    buffer.writeUInt8(0x8F, 28); // Use original footer
+    return buffer;
+  };
+  
+  export const createAMPPacket = (params) => {
+    const buffer = Buffer.alloc(27);
+    buffer.writeUInt8(0x6B, 0);
+    buffer.writeUInt8(0x04, 1); // Command ID placeholder
+    buffer.writeUInt8(0x00, 2); // Command ID placeholder
+    buffer.writeUInt8(0x00, 3); // Packet ID
+    buffer.writeFloatLE(parseFloat(params.voltage), 4);
+    buffer.writeFloatLE(parseFloat(params.duration), 8);
+    buffer.writeFloatLE(parseFloat(params.interval), 12);
+    // Fill the rest with zeros, then the footer
+    for (let i = 16; i < 26; i++) {
+      buffer.writeUInt8(0, i);
+    }
+    buffer.writeUInt8(0x8F, 26); // Use original footer
+    return buffer;
+  };

@@ -16,6 +16,7 @@ import Canvas from 'react-native-canvas';
 import * as analysisUtils from './analysisUtils';
 import { KineticAnalysisScreen } from './KineticAnalysisScreen';
 import StripReaderScreen from './StripReaderScreen';
+import useUsbDevice from './useUsbDevice';
 
 const API_URL = 'https://mobilespectro-183048999594.europe-west1.run.app';
 const { width: screenWidth, height: screenHeight } = Dimensions.get('window');
@@ -34,19 +35,8 @@ const STATES = {
 };
 
 export default function App() {
-  useEffect(() => {
-    try {
-      console.log('DEBUG: Camera import ->', ExpoCameraModule);
-      console.log('DEBUG: Slider import ->', Slider);
-      console.log('DEBUG: analysisUtils keys ->', Object.keys(analysisUtils));
-    } catch (e) {
-      console.warn('DEBUG logging failed', e);
-    }
-  }, []);
-
   // Resolve Camera component: prefer named export CameraView, then default, then Camera
   const CameraComponent = ExpoCameraModule.CameraView || ExpoCameraModule.default || ExpoCameraModule.Camera || ExpoCameraModule;
-  console.log('DEBUG: CameraComponent ->', CameraComponent, 'typeof:', typeof CameraComponent);
 
   // If CameraComponent is not a valid component, render a safe fallback to avoid crash
   if (!CameraComponent || (typeof CameraComponent !== 'function' && typeof CameraComponent !== 'object')) {
@@ -57,6 +47,7 @@ export default function App() {
       </View>
     );
   }
+  const usbDevice = useUsbDevice(1155, 22336);
   const [permission, requestPermission] = ExpoCameraModule.useCameraPermissions();
   const [appState, setAppState] = useState(STATES.IDLE);
   const [loading, setLoading] = useState(true);
@@ -491,6 +482,9 @@ export default function App() {
           <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('analysis')}>
             <Text style={styles.tabText}>📈 Analysis</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('strips')}>
+            <Text style={styles.tabText}>🔬 Strip Reader</Text>
+          </TouchableOpacity>
         </View>
         <ResultsScreen
           result={selectedResult}
@@ -513,6 +507,9 @@ export default function App() {
           </TouchableOpacity>
           <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('analysis')}>
             <Text style={styles.tabText}>📈 Analysis</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('strips')}>
+            <Text style={styles.tabText}>🔬 Strip Reader</Text>
           </TouchableOpacity>
         </View>
 
@@ -593,7 +590,7 @@ export default function App() {
             <Text style={[styles.tabText, styles.activeTabText]}>🔬 Strip Reader</Text>
           </TouchableOpacity>
         </View>
-        <StripReaderScreen />
+        <StripReaderScreen usbDevice={usbDevice} />
       </View>
     );
   }

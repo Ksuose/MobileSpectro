@@ -63,6 +63,9 @@ export default function StripReaderScreen() {
     labels: [],
     datasets: [{ data: [] }],
   });
+  const [isAwaitingAck, setIsAwaitingAck] = useState(false);
+  const [isMining, setIsMining] = useState(false);
+  const mineIntervalId = useRef(null);
   const scrollViewRef = useRef();
 
   useEffect(() => {
@@ -77,18 +80,28 @@ export default function StripReaderScreen() {
 
   useEffect(() => {
     if (data) {
-      const decodedData = analysisUtils.parseDevicePacket(data);
-      addLog(`RX: ${JSON.stringify(decodedData)}`);
-      setChartData((prev) => {
-        const newLabels = [...prev.labels, decodedData.x.toFixed(2)];
-        const newData = [...prev.datasets[0].data, decodedData.y];
-        return {
-          labels: newLabels,
-          datasets: [{ data: newData }],
-        };
-      });
+      const result = analysisUtils.parseDevicePacket(data);
+      if (result.type === 'data') {
+        addLog(`RX (Data): ${JSON.stringify(result.payload)}`);
+        setChartData((prev) => {
+          const newLabels = [...prev.labels, result.payload.x.toFixed(2)];
+          const newData = [...prev.datasets[0].data, result.payload.y];
+          return {
+            labels: newLabels,
+            datasets: [{ data: newData }],
+          };
+        });
+      } else if (result.type === 'status') {
+        addLog(`RX (Status): ${result.payload}`);
+        if (isAwaitingAck && result.payload === '6b4e04f401000064') {
+          setIsAwaitingAck(false);
+          sendScanCommand();
+        }
+      } else {
+        addLog(`RX (Unknown): ${result.payload}`);
+      }
     }
-  }, [data]);
+  }, [data, isAwaitingAck]);
 
   useEffect(() => {
     if (error) {
@@ -97,7 +110,12 @@ export default function StripReaderScreen() {
   }, [error]);
 
   const addLog = (message) => {
-    setLogs((prev) => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev]);
+    const logMessage = `[${new Date().toLocaleTimeString()}] ${message}`;
+    setLogs((prev) => [logMessage, ...prev]);
+    // Also print RX messages to the main console for better visibility
+    if (message.startsWith('RX')) {
+      console.log(message);
+    }
   };
 
   const handleProfileChange = (profile) => {
@@ -128,23 +146,25 @@ export default function StripReaderScreen() {
       return;
     }
     addLog(`TX: ${command.toString('hex')}`);
-    write(command.toString('base64'));
+    await write(command.toString('base64'));
   };
 
-  const handleTestLED = () => {
-    const command = analysisUtils.createLEDCommand(true);
-    writeCommand(command);
-    setTimeout(() => {
-      const offCommand = analysisUtils.createLEDCommand(false);
-      writeCommand(offCommand);
-    }, 1000);
-  };
-
-  const handleStartScan = async () => {
+  const handleTestLED = async () => {
     const [handshake1, handshake2] = analysisUtils.getHandshakeCommands();
     await writeCommand(handshake1);
+    await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
     await writeCommand(handshake2);
+    await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
 
+    const command = analysisUtils.createLEDCommand(true);
+    await writeCommand(command);
+    await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+
+    const offCommand = analysisUtils.createLEDCommand(false);
+    await writeCommand(offCommand);
+  };
+
+  const sendScanCommand = () => {
     let scanPacket;
     switch (selectedProfile) {
       case 'CV':
@@ -164,6 +184,69 @@ export default function StripReaderScreen() {
         return;
     }
     writeCommand(scanPacket);
+  };
+
+  const handleStartScan = async () => {
+    const [handshake1, handshake2] = analysisUtils.getHandshakeCommands();
+    await writeCommand(handshake1);
+    await new Promise(resolve => setTimeout(resolve, 100)); // Wait 100ms
+    await writeCommand(handshake2);
+    setIsAwaitingAck(true);
+  };
+
+  const handleMineCommands = async () => {
+    if (isMining) {
+      if (mineIntervalId.current) {
+        clearInterval(mineIntervalId.current);
+        mineIntervalId.current = null;
+      }
+      setIsMining(false);
+      addLog('--- Mining Stopped ---');
+      return;
+    }
+
+    addLog('--- Starting Command Mining ---');
+    setIsMining(true);
+    setChartData({ labels: [], datasets: [{ data: [] }] });
+
+    const [handshake1, handshake2] = analysisUtils.getHandshakeCommands();
+    await writeCommand(handshake1);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    await writeCommand(handshake2);
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    let subCommandId = 0;
+    mineIntervalId.current = setInterval(() => {
+      if (subCommandId > 255) {
+        clearInterval(mineIntervalId.current);
+        mineIntervalId.current = null;
+        setIsMining(false);
+        addLog('--- Mining Finished ---');
+        return;
+      }
+
+      const minePacket = Buffer.alloc(31);
+      minePacket.writeUInt8(0x6B, 0);      // Header
+      minePacket.writeUInt8(0x0C, 1);      // Main Command ID (Best Guess)
+      minePacket.writeUInt8(subCommandId, 2); // The byte we are mining!
+      minePacket.writeUInt8(0x00, 3);      // Packet ID
+      
+      // Hardcoded "safe" parameters
+      minePacket.writeFloatLE(-0.2, 4);
+      minePacket.writeFloatLE(0.2, 8);
+      minePacket.writeFloatLE(-0.2, 12);
+      minePacket.writeFloatLE(0.1, 16);
+      minePacket.writeUInt8(1, 20);
+
+      for (let i = 21; i < 30; i++) {
+        minePacket.writeUInt8(0, i);
+      }
+      minePacket.writeUInt8(0x8F, 30);    // Original Footer
+
+      writeCommand(minePacket);
+
+      subCommandId++;
+    }, 250); // 4 commands per second
   };
 
   const handleClear = () => {
@@ -248,6 +331,12 @@ export default function StripReaderScreen() {
             onPress={handleStartScan}
           >
             <Text style={styles.buttonText}>Start Scan</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.actionButton, { backgroundColor: isMining ? '#d16464' : '#5865F2' }]}
+            onPress={handleMineCommands}
+          >
+            <Text style={styles.buttonText}>{isMining ? 'Stop Mining' : 'Mine Commands'}</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.actionButton} onPress={handleClear}>
             <Text style={styles.buttonText}>Clear</Text>
