@@ -32,8 +32,7 @@
       }
     },
     "plugins": [
-      "expo-dev-client",
-      "@serserm/react-native-turbo-serialport"
+      "expo-dev-client"
     ]
   }
 }

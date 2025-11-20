@@ -566,6 +566,9 @@ export default function App() {
           <TouchableOpacity style={[styles.tab, styles.activeTab]}>
             <Text style={[styles.tabText, styles.activeTabText]}>📈 Analysis</Text>
           </TouchableOpacity>
+          <TouchableOpacity style={styles.tab} onPress={() => setActiveTab('strips')}>
+            <Text style={styles.tabText}>🔬 Strip Reader</Text>
+          </TouchableOpacity>
         </View>
         <KineticAnalysisScreen results={results} />
       </View>

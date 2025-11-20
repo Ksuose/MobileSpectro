@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -13,6 +13,7 @@ import {
 import { Buffer } from 'buffer';
 import * as analysisUtils from './analysisUtils';
 import { LineChart } from 'react-native-chart-kit';
+import useUsbDevice from './useUsbDevice';
 
 const PROFILES = ['CV', 'LSV', 'SWV', 'AMP', 'OCP'];
 
@@ -48,7 +49,7 @@ const PARAMETERS = {
 const screenWidth = Dimensions.get('window').width;
 
 export default function StripReaderScreen() {
-  const [device, setDevice] = useState(null);
+  const { isConnected, data, error, connect, disconnect, write } = useUsbDevice(1155, 22336);
   const [connectionStatus, setConnectionStatus] = useState('Disconnected');
   const [selectedProfile, setSelectedProfile] = useState('CV');
   const [parameters, setParameters] = useState(
@@ -62,6 +63,38 @@ export default function StripReaderScreen() {
     labels: [],
     datasets: [{ data: [] }],
   });
+  const scrollViewRef = useRef();
+
+  useEffect(() => {
+    if (isConnected) {
+      setConnectionStatus('Connected');
+      addLog('Device connected');
+    } else {
+      setConnectionStatus('Disconnected');
+      addLog('Device disconnected');
+    }
+  }, [isConnected]);
+
+  useEffect(() => {
+    if (data) {
+      const decodedData = analysisUtils.parseDevicePacket(data);
+      addLog(`RX: ${JSON.stringify(decodedData)}`);
+      setChartData((prev) => {
+        const newLabels = [...prev.labels, decodedData.x.toFixed(2)];
+        const newData = [...prev.datasets[0].data, decodedData.y];
+        return {
+          labels: newLabels,
+          datasets: [{ data: newData }],
+        };
+      });
+    }
+  }, [data]);
+
+  useEffect(() => {
+    if (error) {
+      addLog(`Error: ${error}`);
+    }
+  }, [error]);
 
   const addLog = (message) => {
     setLogs((prev) => [`[${new Date().toLocaleTimeString()}] ${message}`, ...prev]);
@@ -82,19 +115,20 @@ export default function StripReaderScreen() {
   };
 
   const handleConnect = async () => {
-    addLog('Connect function not implemented for USB yet.');
+    connect();
   };
 
   const handleDisconnect = async () => {
-    addLog('Disconnect function not implemented for USB yet.');
+    disconnect();
   };
 
   const writeCommand = async (command) => {
-    if (!device) {
+    if (!isConnected) {
       Alert.alert('Device not connected');
       return;
     }
-    addLog(`TX (not sent): ${command.toString('hex')}`);
+    addLog(`TX: ${command.toString('hex')}`);
+    write(command.toString('base64'));
   };
 
   const handleTestLED = () => {
